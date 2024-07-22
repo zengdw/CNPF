@@ -41,7 +41,7 @@ public final class Poller {
 
     private Thread createPollerThread(PollerConfig pollerConfig) {
         int sequence = COUNTER.getAndIncrement();
-        return Thread.ofPlatform().name("poller-" + sequence).unstarted(() -> {
+        return Thread.ofPlatform().name(STR."poller-\{sequence}").unstarted(() -> {
             for (; ; ) {
                 // 多路复用监听
 

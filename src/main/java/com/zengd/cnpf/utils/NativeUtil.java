@@ -4,12 +4,16 @@ import com.zengd.cnpf.exception.ExceptionType;
 import com.zengd.cnpf.exception.FrameworkException;
 import com.zengd.cnpf.vo.OsType;
 
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
+import java.lang.foreign.*;
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+
+import static com.zengd.cnpf.vo.OsType.*;
 
 /**
  * 堆外内存操作方法类
@@ -28,17 +32,55 @@ public class NativeUtil {
     private static final String OS_NAME = System.getProperty("os.name").toLowerCase();
     private static final OsType OS_TYPE = detectOsType();
 
+    private static final Arena globalArena = Arena.global();
+    private static final Linker linker = Linker.nativeLinker();
+    private static final String libPath = System.getProperty("TENET_LIBRARY_PATH");
+    private static final ConcurrentHashMap<String, SymbolLookup> libraryCache = new ConcurrentHashMap<>();
+
     private NativeUtil() {
         throw new UnsupportedOperationException();
     }
 
+    private static String getDynamicLibraryName(String identifier) {
+        return switch (OS_TYPE) {
+            case Windows -> STR."lib\{identifier}.dll";
+            case Linux -> STR."lib\{identifier}.so";
+            case MacOS -> STR."lib\{identifier}.dylib";
+            default -> throw new FrameworkException(ExceptionType.NATIVE, "Unrecognized operating system");
+        };
+    }
+
+    public static SymbolLookup loadLibrary(String identifier) {
+        if (libPath == null) {
+            throw new FrameworkException(ExceptionType.NATIVE, "Global libPath not found");
+        }
+        return libraryCache.computeIfAbsent(identifier, i -> SymbolLookup.libraryLookup(STR."\{libPath}/\{getDynamicLibraryName(i)}", Arena.global()));
+    }
+
+
+    public static MethodHandle methodHandle(SymbolLookup lookup, String methodName, FunctionDescriptor functionDescriptor, Linker.Option... options) {
+        MemorySegment methodPointer = lookup.find(methodName)
+                .orElseThrow(() -> new FrameworkException(ExceptionType.NATIVE, STR."Unable to load target native method : \{methodName}"));
+        return linker.downcallHandle(methodPointer, functionDescriptor, options);
+    }
+
+    public static MethodHandle methodHandle(SymbolLookup lookup, List<String> methodNames, FunctionDescriptor functionDescriptor, Linker.Option... options) {
+        for (String methodName : methodNames) {
+            Optional<MemorySegment> methodPointer = lookup.find(methodName);
+            if (methodPointer.isPresent()) {
+                return linker.downcallHandle(methodPointer.get(), functionDescriptor, options);
+            }
+        }
+        throw new FrameworkException(ExceptionType.NATIVE, STR."Unable to load target native method : \{methodNames}");
+    }
+
     private static OsType detectOsType() {
         if (OS_NAME.contains("windows")) {
-            return OsType.Windows;
+            return Windows;
         } else if (OS_NAME.contains("linux")) {
-            return OsType.Linux;
+            return Linux;
         } else if (OS_NAME.contains("mac") && OS_NAME.contains("os")) {
-            return OsType.MacOS;
+            return MacOS;
         } else {
             return OsType.Unknown;
         }

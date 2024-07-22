@@ -8,4 +8,5 @@ public enum ExceptionType {
     CONTEXT,
     NATIVE,
     NETWORK,
+    WHEEL,
 }
